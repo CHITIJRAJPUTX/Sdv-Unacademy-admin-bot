@@ -1,7 +1,7 @@
 import os
 import json
 import requests
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import asyncio
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
@@ -20,8 +20,26 @@ ADD_BATCH_API = "https://studyuk.fun/add_batch.php?batch_id={uid}"
 # Cache for storing batch details
 batch_cache = {}
 auto_update_enabled = False
+bot_enabled = True  # Global bot state
+user_request_counts = {}  # Track user requests per day
+last_reset_time = datetime.now()  # Track when counts were last reset
 
 # Helper functions
+def reset_request_counts():
+    global user_request_counts, last_reset_time
+    now = datetime.now()
+    if now.date() > last_reset_time.date():
+        user_request_counts = {}
+        last_reset_time = now
+
+def can_make_request(user_id):
+    reset_request_counts()
+    return user_request_counts.get(user_id, 0) < 5
+
+def increment_request_count(user_id):
+    reset_request_counts()
+    user_request_counts[user_id] = user_request_counts.get(user_id, 0) + 1
+
 def get_goals_keyboard(page=0):
     try:
         with requests.get(GOALS_API) as response:
@@ -181,7 +199,25 @@ async def add_batch_to_system(batch_uid, user):
         
         # Second API call to add batch
         response = requests.get(ADD_BATCH_API.format(uid=batch_uid))
-        return response.status_code == 200
+        
+        if response.status_code == 200:
+            # Notify the user who requested this batch
+            requester_id = None
+            if isinstance(user, int):
+                requester_id = user
+            else:
+                requester_id = user.id
+            
+            try:
+                await app.send_message(
+                    requester_id,
+                    f"✅ Your requested batch ({batch_uid}) has been added to the system!"
+                )
+            except Exception as e:
+                print(f"Error notifying user {requester_id}: {e}")
+            
+            return True
+        return False
     except Exception as e:
         print(f"Error adding batch: {e}")
         return False
@@ -189,9 +225,25 @@ async def add_batch_to_system(batch_uid, user):
 # Command handlers
 @app.on_message(filters.command("start"))
 async def start_command(client: Client, message: Message):
+    if not bot_enabled and message.from_user.id not in AUTH_USERS:
+        await message.reply_text("❌ The bot is currently disabled. Only admins can use it.")
+        return
+    
     keyboard = get_main_menu_keyboard(message.from_user.id)
     welcome_msg = "🎉 Welcome to SDV Bot!\n\n👇 Please select an option from the menu below:"
     await message.reply_text(welcome_msg, reply_markup=keyboard)
+
+@app.on_message(filters.command("on") & filters.user(AUTH_USERS))
+async def enable_bot(client: Client, message: Message):
+    global bot_enabled
+    bot_enabled = True
+    await message.reply_text("✅ Bot has been enabled for all users.")
+
+@app.on_message(filters.command("off") & filters.user(AUTH_USERS))
+async def disable_bot(client: Client, message: Message):
+    global bot_enabled
+    bot_enabled = False
+    await message.reply_text("❌ Bot has been disabled for regular users. Only admins can use it now.")
 
 @app.on_message(filters.command("add") & filters.user(AUTH_USERS))
 async def add_batch_command(client: Client, message: Message):
@@ -243,6 +295,10 @@ async def add_batch_command(client: Client, message: Message):
 # Callback query handler
 @app.on_callback_query()
 async def handle_callback(client: Client, callback_query: CallbackQuery):
+    if not bot_enabled and callback_query.from_user.id not in AUTH_USERS:
+        await callback_query.answer("❌ The bot is currently disabled. Only admins can use it.", show_alert=True)
+        return
+    
     data = callback_query.data
     user = callback_query.from_user
     
@@ -378,6 +434,14 @@ async def handle_callback(client: Client, callback_query: CallbackQuery):
         
         if data.startswith("req_"):
             batch_uid = data.split("_")[1]
+            
+            # Check request limit
+            if not can_make_request(user.id):
+                await callback_query.answer("❌ Aap 1 din mein maximum 5 batches hi request kar sakte hain. Kal fir try karein.", show_alert=True)
+                return
+            
+            increment_request_count(user.id)
+            
             batch = batch_cache.get(batch_uid)
             
             if batch:
@@ -463,6 +527,7 @@ async def handle_callback(client: Client, callback_query: CallbackQuery):
 async def main():
     await app.start()
     print("Bot started...")
+    # Start auto_update_task only once and keep it running
     asyncio.create_task(auto_update_task())
     await idle()
     await app.stop()
