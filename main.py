@@ -13,7 +13,7 @@ app = Client("SDV_Bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 # Constants
 GOALS_API = "https://unknownkil.github.io/Goal_unad-json/goals.json"
 BATCHES_API = "https://api-frontend.unacademy.com/api/v1/batch/lists/filter/?goal_uid={uid}&limit=10&offset={offset}&type=0"
-UPDATE_API = ""https://current-retha-myshivi-0f7912ad.koyeb.app/update-batch"
+UPDATE_API = "https://current-retha-myshivi-0f7912ad.koyeb.app/update-batch"
 BATCH_INFO_API = "https://studyuk.fun/batch.json"
 ADD_BATCH_API = "https://studyuk.fun/add_batch.php?batch_id={uid}"
 
